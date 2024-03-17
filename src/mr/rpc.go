@@ -6,7 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+	"fmt"
+	"os"
+)
 import "strconv"
 
 //
@@ -22,8 +25,24 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+// GetFileName num代表哈希取余的结果
+func (t *TaskInfo) GetFileName(num string) string {
+	switch t.TaskType {
+	case TaskMap:
+		return fmt.Sprintf("%s-mr-out-%d-%s", t.TaskType, t.Number, num)
+	case TaskReduce:
+		return fmt.Sprintf("mr-out-%d", t.Number)
+	default:
+		return ""
+	}
+}
 
+//
+//func (t *TaskInfo) GetMapFileName() string {
+//	return fmt.Sprintf("mr-out-%s-%s", t.TaskType, t.Number)
+//}
+
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
