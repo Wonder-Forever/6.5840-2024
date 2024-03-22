@@ -42,6 +42,8 @@ func (c *Coordinator) string() string {
 // RPC
 
 func (c *Coordinator) GetTask(args string, reply *TaskInfo) error {
+	c.Lock()
+	defer c.Unlock()
 	baseTask := c.getTaskOne()
 	myLog("coordinator send task info%+v\n", baseTask)
 	*reply = baseTask.TaskInfo
@@ -49,6 +51,8 @@ func (c *Coordinator) GetTask(args string, reply *TaskInfo) error {
 }
 
 func (c *Coordinator) TaskReport(args *TaskInfo, reply *TaskInfo) error {
+	c.Lock()
+	defer c.Unlock()
 	myLog("coordinator get report info  %+v\n", args)
 	c.handleTaskReport(args)
 	return nil
@@ -75,8 +79,6 @@ func (c *Coordinator) initMapTask(files []string) {
 
 func (c *Coordinator) initReduceTask() {
 	myLog("init reduce task start")
-	c.Lock()
-	defer c.Unlock()
 
 	var reduceTaskList []*BaseTask
 	var mapOutputFilePath []string
@@ -108,9 +110,6 @@ func (c *Coordinator) getSleepTask() *BaseTask {
 }
 
 func (c *Coordinator) getMapTask() *BaseTask {
-	c.Lock()
-	defer c.Unlock()
-
 	if c.TaskType != TaskMap {
 		myLog("task type is reduce %s\n", c.string())
 		return nil
@@ -134,9 +133,7 @@ func (c *Coordinator) getMapTask() *BaseTask {
 		myLog("all map task is done %s\n", c.string())
 		c.TaskType = TaskReduce
 		// initReduceTask需要获取锁，这里先释放
-		c.Unlock()
 		c.initReduceTask()
-		c.Lock()
 		return nil
 	} else {
 		// map任务未完成，需要等待，返回sleep任务
@@ -146,9 +143,6 @@ func (c *Coordinator) getMapTask() *BaseTask {
 }
 
 func (c *Coordinator) getReduceTask() *BaseTask {
-	c.Lock()
-	defer c.Unlock()
-
 	if c.TaskType != TaskReduce {
 		myLog("task type is not reduce but call getReduceTask: %s", c.string())
 	}
@@ -199,9 +193,6 @@ func (c *Coordinator) getTaskOne() *BaseTask {
 
 // 修改状态，删除所有map文件
 func (c *Coordinator) taskDone() {
-	c.Lock()
-	defer c.Unlock()
-
 	c.Status = StatusDone
 	lo.ForEach(c.TaskList, func(baseTask *BaseTask, index int) {
 		lo.ForEach(baseTask.ReduceTaskFilePath, func(filePath string, index int) {
@@ -221,9 +212,6 @@ func (c *Coordinator) handleTaskReport(taskInfo *TaskInfo) {
 
 // 处理map任务的上报
 func (c *Coordinator) handleMapTaskReport(taskReported *TaskInfo) {
-	c.Lock()
-	defer c.Unlock()
-
 	for _, task := range c.TaskList {
 		if task.judgeSameTask(taskReported) {
 			// Map任务处理完成
@@ -235,9 +223,6 @@ func (c *Coordinator) handleMapTaskReport(taskReported *TaskInfo) {
 
 // 处理reduce任务的上报
 func (c *Coordinator) handleReduceTaskReport(taskReported *TaskInfo) {
-	c.Lock()
-	defer c.Unlock()
-
 	for _, task := range c.TaskList {
 		if task.judgeSameTask(taskReported) {
 			// Map任务处理完成
