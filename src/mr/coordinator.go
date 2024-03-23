@@ -6,7 +6,6 @@ import (
 	"github.com/samber/lo"
 	"log"
 	"strings"
-	"sync"
 	"time"
 )
 import "net"
@@ -19,11 +18,43 @@ import "net/http"
 // reduce任务的数量和nReduce数量一致
 // 这两个并不是总相等
 type Coordinator struct {
-	nReduce  int         // map任务输出文件数量
-	Status   TaskStatus  // Coordinator的状态
-	TaskType TypeTask    // 标识当前任务类型
-	TaskList []*BaseTask // 任务列表
-	sync.RWMutex
+	nReduce        int         // map任务输出文件数量
+	Status         TaskStatus  // Coordinator的状态
+	TaskType       TypeTask    // 标识当前任务类型
+	TaskList       []*BaseTask // 任务列表
+	GetTaskChan    chan TaskChan
+	ReportTaskChan chan TaskChan
+	doneChan       chan struct{}
+}
+
+// TaskChan
+// 用作GetWork时，TaskInfo代表返回给worker的任务指针，由后台goroutine写入
+type TaskChan struct {
+	TaskInfo *TaskInfo
+	OK       chan struct{}
+}
+
+func (c *Coordinator) handleTask() {
+	doneFlag := false
+	for {
+		select {
+		case msg := <-c.GetTaskChan:
+			baseTask := c.getTaskOne()
+			myLog("coordinator send task info%+v\n", baseTask)
+			*msg.TaskInfo = baseTask.TaskInfo
+			msg.OK <- struct{}{}
+			// 任务结束
+			if baseTask.Status == StatusDone && !doneFlag {
+				c.doneChan <- struct{}{}
+				doneFlag = true
+			}
+		case msg := <-c.ReportTaskChan:
+			taskInfo := msg.TaskInfo
+			myLog("coordinator get report info  %+v\n", taskInfo)
+			c.handleTaskReport(taskInfo)
+			msg.OK <- struct{}{}
+		}
+	}
 }
 
 func (c *Coordinator) string() string {
@@ -42,19 +73,22 @@ func (c *Coordinator) string() string {
 // RPC
 
 func (c *Coordinator) GetTask(args string, reply *TaskInfo) error {
-	c.Lock()
-	defer c.Unlock()
-	baseTask := c.getTaskOne()
-	myLog("coordinator send task info%+v\n", baseTask)
-	*reply = baseTask.TaskInfo
+	info := TaskChan{
+		TaskInfo: reply,
+		OK:       make(chan struct{}),
+	}
+	c.GetTaskChan <- info
+	<-info.OK
 	return nil
 }
 
 func (c *Coordinator) TaskReport(args *TaskInfo, reply *TaskInfo) error {
-	c.Lock()
-	defer c.Unlock()
-	myLog("coordinator get report info  %+v\n", args)
-	c.handleTaskReport(args)
+	info := TaskChan{
+		TaskInfo: args,
+		OK:       make(chan struct{}),
+	}
+	c.ReportTaskChan <- info
+	<-info.OK
 	return nil
 }
 
@@ -237,8 +271,11 @@ func (c *Coordinator) init(files []string, nReduce int) {
 	c.nReduce = nReduce
 	c.Status = StatusDoing
 	c.TaskType = TaskMap
-	c.RWMutex = sync.RWMutex{}
+	c.GetTaskChan = make(chan TaskChan)
+	c.ReportTaskChan = make(chan TaskChan)
+	c.doneChan = make(chan struct{})
 	c.initMapTask(files)
+	go c.handleTask()
 	myLog("init coordinator done %s\n", c.string())
 }
 
@@ -259,10 +296,12 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	c.RLock()
-	defer c.RUnlock()
-
-	return c.Status == StatusDone
+	select {
+	case <-c.doneChan:
+		return true
+	default:
+		return false
+	}
 }
 
 // create a Coordinator.
